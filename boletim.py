@@ -312,7 +312,7 @@ def infografico(ctx):
                          "axes.edgecolor": GRID, "axes.labelcolor": MUTED,
                          "xtick.color": MUTED, "ytick.color": MUTED})
     fig = plt.figure(figsize=(9, 13.5), dpi=120, facecolor=BG)
-    gs = fig.add_gridspec(6, 2, height_ratios=[0.55, 2.0, 1.75, 1.35, 1.35, 1.6], hspace=0.62, wspace=0.28,
+    gs = fig.add_gridspec(6, 2, height_ratios=[0.55, 2.0, 2.15, 1.35, 1.35, 1.6], hspace=0.62, wspace=0.28,
                           left=0.07, right=0.96, top=0.985, bottom=0.03)
     f = ctx["faixa"]
 
@@ -353,7 +353,7 @@ def infografico(ctx):
     # réguas
     ax = fig.add_subplot(gs[2, 0]); ax.axis("off")
     ax.set_title("Réguas da bacia (Defesa Civil SC)", loc="left", fontsize=11, weight="bold")
-    linhas = ctx["rios"][:12]
+    linhas = ctx["rios"][:10]
     for i, r in enumerate(linhas):
         y = 0.88 - i * (0.88 / max(len(linhas), 1))
         d = r.get("delta3h")
@@ -373,7 +373,7 @@ def infografico(ctx):
         fech = b.get("fechadas") or 0
         cor = INK
         ax.text(0, y, b["nome"].replace("Barragem ", ""), fontsize=9.5, weight="bold", transform=ax.transAxes, va="top")
-        ax.text(1, y, f"comportas: {b.get('abertas') or 0} ab. / {fech} fech.", fontsize=8.5, color=cor,
+        ax.text(1, y, f"comportas: {int(b.get('abertas') or 0)} ab. / {int(fech)} fech.", fontsize=8.5, color=cor,
                 transform=ax.transAxes, va="top", ha="right")
         y -= 0.12
         mont = b.get("mont")
@@ -518,7 +518,7 @@ def main():
         L.append("📏 " + " · ".join(f"{r['nome']} {r['nivel']:.2f}{seta(r.get('delta3h'))}" for r in rios[:6]))
     if barragens:
         L.append("🚧 Comportas abertas/fechadas: " + " · ".join(
-            f"{b['nome'].replace('Barragem ', '')} {b.get('abertas') or 0}/{b.get('fechadas') or 0}" for b in barragens))
+            f"{b['nome'].replace('Barragem ', '')} {int(b.get('abertas') or 0)}/{int(b.get('fechadas') or 0)}" for b in barragens))
     L.append(f"🌧️ Chuva bacia: {obs24:.0f} mm/24h (obs) · previsão {p24 or 0:.0f}/{p48 or 0:.0f}/{p72 or 0:.0f} mm em 24/48/72h")
     it = (prev or {}).get("Itajaí")
     if it:
