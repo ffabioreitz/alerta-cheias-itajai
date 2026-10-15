@@ -125,6 +125,12 @@ def descobrir(tok):
     alvo = {norm(m) for m in CFG["municipios"]}
     inv = get(tok, "HidroInventarioEstacoes/v1", {"Unidade Federativa": "SC"})
     log("inventário SC:", len(inv), "estações")
+    if inv:
+        log("campos:", ", ".join(inv[0].keys()))
+    for e in inv:
+        if norm(e.get("Municipio_Nome")) in alvo:
+            log("  inv", e.get("codigoestacao"), "|", e.get("Estacao_Nome"), "|",
+                {k: v for k, v in e.items() if any(x in k.upper() for x in ("TIPO", "TELEM", "OPERA", "RESPONS"))})
     usina = re.compile(r"\b(PCH|UHE|CGH)\b")
     cand, vistos = [], set()
     for e in inv:
