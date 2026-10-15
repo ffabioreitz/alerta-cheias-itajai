@@ -760,10 +760,38 @@ def main():
     except Exception as e:  # noqa — sem gráfico, a mensagem segue
         log("infográfico falhou:", repr(e))
     # versão para e-mail (comentário no GitHub → notificação por e-mail)
+    # Agenda: 7h, 10h, 13h, 16h e 19h. Fora disso, só se houver risco de nível crítico em 3 dias.
     os.makedirs(DOCS, exist_ok=True)
-    open(os.path.join(DOCS, "boletim.md"), "w", encoding="utf-8").write(email_md(ctx, blu_d3, aviso, titulo_aviso))
+    arq_md = os.path.join(DOCS, "boletim.md")
+    if os.path.exists(arq_md):
+        os.remove(arq_md)
+    lim = next((f["nivel"] for f in faixas if f["nome"].strip().lower() == "alerta"), 6.0)
+    pico3d = None
+    if pn and pn["modo"] == "nivel":
+        pico3d = max((x for x in (pn.get("hmax") or []) + (pn.get("h75") or []) + pn["h"] if x is not None), default=None)
+    critico = (blu_nivel or 0) >= lim or (pico3d or 0) >= lim
+    arq_env = os.path.join(CACHE, "envio.json")
+    try:
+        ult = json.load(open(arq_env, encoding="utf-8"))
+    except Exception:  # noqa
+        ult = {}
+    slot = f"{AGORA:%Y-%m-%d}-{(AGORA.hour - 7) // 3}" if 7 <= AGORA.hour <= 20 else None
+    if modo == "teste":
+        motivo = "teste manual"
+    elif critico:
+        motivo = f"risco de nível crítico (≥ {lim:.1f} m em Blumenau em até 3 dias)"
+    elif slot and ult.get("slot") != slot:
+        motivo = "horário agendado"
+    else:
+        motivo = None
+    log("e-mail:", motivo or "fora do horário — não envia")
+    if motivo:
+        open(arq_md, "w", encoding="utf-8").write(email_md(ctx, blu_d3, aviso, titulo_aviso))
+        if motivo != "teste manual":
+            os.makedirs(CACHE, exist_ok=True)
+            json.dump({"slot": slot, "quando": AGORA.isoformat()}, open(arq_env, "w", encoding="utf-8"))
 
-    if modo in ("teste", "normal", "boletim"):
+    if motivo and modo in ("teste", "normal", "boletim"):
         A.whatsapp(texto)
 
 
