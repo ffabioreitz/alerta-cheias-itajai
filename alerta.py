@@ -207,9 +207,7 @@ def whatsapp(texto):
                     resp = r.read().decode("utf-8", "ignore")
                 limpo = re.sub(r"<[^>]+>", " ", resp)
                 limpo = limpo.replace(fone, "…" + fone[-4:]).replace(key.strip(), "***")
-                i = limpo.find("Text to send")
-                j = limpo.find("\n", i + 200) if i >= 0 else -1
-                resumo = " ".join((limpo[:i] + " [texto] " + (limpo[j:] if j > 0 else "")).split()) if i >= 0 else " ".join(limpo.split())
+                resumo = " ".join(limpo.split())[-300:]  # o status do CallMeBot vem no fim da resposta
                 ok = "queued" in resp.lower() or "message sent" in resp.lower()
                 log("WhatsApp", "…" + fone[-4:], "enviado" if ok else "NÃO confirmado", "| CallMeBot:", resumo[-400:])
                 break
