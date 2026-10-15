@@ -240,9 +240,16 @@ def curva_chave(tok):
     if tok is None:
         return None
     import numpy as np
-    itens = A.get(tok, "HidroSerieResumoDescarga/v1", {
-        "Código da Estação": B["estacao_curva"], "Tipo Filtro Data": "DATA_LEITURA",
-        "Data Inicial (yyyy-MM-dd)": "2000-01-01", "Data Final (yyyy-MM-dd)": AGORA.strftime("%Y-%m-%d")})
+    itens, vazios = [], 0
+    for ano in range(AGORA.year, AGORA.year - 16, -1):  # a ANA só aceita períodos curtos
+        lote = A.get(tok, "HidroSerieResumoDescarga/v1", {
+            "Código da Estação": B["estacao_curva"], "Tipo Filtro Data": "DATA_LEITURA",
+            "Data Inicial (yyyy-MM-dd)": f"{ano}-01-01",
+            "Data Final (yyyy-MM-dd)": min(f"{ano}-12-31", AGORA.strftime("%Y-%m-%d"))})
+        itens += lote
+        vazios = 0 if lote else vazios + 1
+        if vazios >= 3:
+            break
     if itens:
         log("resumo de descarga: campos", list(itens[0].keys())[:25])
     pares = []
