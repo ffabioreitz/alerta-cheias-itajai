@@ -447,7 +447,7 @@ def infografico(ctx):
             fut = [(xs[-1], ys[-1], ys[-1], ys[-1])] + [
                 (meio(dd), h, lo if lo is not None else h, hi if hi is not None else h)
                 for dd, h, lo, hi in zip(pn["dias"][1:], pn["h"][1:], pn["h25"][1:], pn["h75"][1:]) if h is not None]
-        top = max(max(ys + [f[3] for f in fut]) + 1, 5)
+        top = max(max(ys + [f[3] for f in fut]) + 1, (ctx["faixas"][-1]["nivel"] + 1) if ctx["faixas"] else 9)  # régua inteira
         faixas = ctx["faixas"]
         for i, fx in enumerate(faixas):
             sup = faixas[i + 1]["nivel"] if i + 1 < len(faixas) else top + 5
