@@ -14,7 +14,8 @@ Secrets (GitHub > Settings > Secrets and variables > Actions):
   ANA_SENHA          senha recebida da ANA
   WHATSAPP_DESTINOS  5547999990000:APIKEY  (vários separados por vírgula)
 """
-import json, os, sys, time, unicodedata, urllib.parse, urllib.request
+import json, os, re, sys, time, unicodedata, urllib.parse, urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 BASE = "https://www.ana.gov.br/hidrowebservice/EstacoesTelemetricas"
@@ -119,21 +120,26 @@ def descobrir(tok):
     alvo = {norm(m) for m in CFG["municipios"]}
     inv = get(tok, "HidroInventarioEstacoes/v1", {"Unidade Federativa": "SC"})
     log("inventário SC:", len(inv), "estações")
-    cand = [e for e in inv
-            if norm(e.get("Municipio_Nome")) in alvo
-            and str(e.get("Operando", "1")) in ("1", "True", "true")]
-    log("candidatas nos municípios:", len(cand))
-    achadas = []
-    for e in cand:
+    usina = re.compile(r"\b(PCH|UHE|CGH)\b")
+    cand, vistos = [], set()
+    for e in inv:
         cod = str(e.get("codigoestacao") or e.get("Codigo_Estacao") or "").strip()
-        if not cod:
-            continue
-        r = resumo_serie(serie(tok, cod))
+        if (norm(e.get("Municipio_Nome")) in alvo
+                and str(e.get("Operando", "1")) in ("1", "True", "true")
+                and re.fullmatch(r"83\d{6}", cod)          # fluviométrica da bacia do Itajaí
+                and not usina.search(norm(e.get("Estacao_Nome")))
+                and cod not in vistos):
+            vistos.add(cod)
+            cand.append((cod, e))
+    log("candidatas (rio, sem usinas):", len(cand))
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        res = list(ex.map(lambda ce: resumo_serie(serie(tok, ce[0])), cand))
+    achadas = []
+    for (cod, e), r in zip(cand, res):
         if r:  # só fica quem tem telemetria de nível funcionando
             achadas.append({"codigo": cod, "nome": e.get("Estacao_Nome"),
                             "municipio": e.get("Municipio_Nome"), "rio": e.get("Rio_Nome")})
             log("  ok", cod, e.get("Estacao_Nome"), r["nivel_m"], "m")
-        time.sleep(1)
     os.makedirs(os.path.dirname(ARQ_EST), exist_ok=True)
     json.dump({"atualizado": datetime.now(TZ).isoformat(), "estacoes": achadas},
               open(ARQ_EST, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
@@ -226,9 +232,9 @@ def main():
     agora = datetime.now(TZ)
     linhas, alertas = [], []
     taxa_lim = CFG["subida_rapida_cmh"]
-    for est in lst:
-        r = resumo_serie(serie(tok, est["codigo"]))
-        time.sleep(1)
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        res = list(ex.map(lambda e: resumo_serie(serie(tok, e["codigo"])), lst))
+    for est, r in zip(lst, res):
         if not r:
             linhas.append(f'• {est["nome"]} ({est["municipio"]}): sem dado recente')
             continue
