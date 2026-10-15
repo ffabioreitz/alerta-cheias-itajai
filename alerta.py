@@ -125,32 +125,27 @@ def descobrir(tok):
     alvo = {norm(m) for m in CFG["municipios"]}
     inv = get(tok, "HidroInventarioEstacoes/v1", {"Unidade Federativa": "SC"})
     log("inventário SC:", len(inv), "estações")
-    if inv:
-        log("campos:", ", ".join(inv[0].keys()))
-    for e in inv:
-        if norm(e.get("Municipio_Nome")) in alvo:
-            log("  inv", e.get("codigoestacao"), "|", e.get("Estacao_Nome"), "|",
-                {k: v for k, v in e.items() if any(x in k.upper() for x in ("TIPO", "TELEM", "OPERA", "RESPONS"))})
-    usina = re.compile(r"\b(PCH|UHE|CGH)\b")
     cand, vistos = [], set()
     for e in inv:
-        cod = str(e.get("codigoestacao") or e.get("Codigo_Estacao") or "").strip()
+        cod = str(e.get("codigoestacao") or "").strip()
         if (norm(e.get("Municipio_Nome")) in alvo
-                and str(e.get("Operando", "1")) in ("1", "True", "true")
-                and re.fullmatch(r"83\d{6}", cod)          # fluviométrica da bacia do Itajaí
-                and not usina.search(norm(e.get("Estacao_Nome")))
-                and cod not in vistos):
+                and str(e.get("Operando")) == "1"
+                and str(e.get("Tipo_Estacao_Telemetrica")) == "1"
+                and norm(e.get("Tipo_Estacao")).startswith("FLUVIO")
+                and cod and cod not in vistos):
             vistos.add(cod)
             cand.append((cod, e))
-    log("candidatas (rio, sem usinas):", len(cand))
-    with ThreadPoolExecutor(max_workers=CFG.get("paralelo", 1)) as ex:
-        res = list(ex.map(lambda ce: resumo_serie(serie(tok, ce[0])), cand))
+    log("fluviométricas telemétricas nos municípios:", len(cand))
     achadas = []
-    for (cod, e), r in zip(cand, res):
-        if r:  # só fica quem tem telemetria de nível funcionando
+    for cod, e in cand:
+        itens = serie(tok, cod, "DIAS_2")
+        ds = sorted(d for d in (data(it.get("Data_Hora_Medicao")) for it in itens) if d)
+        r = resumo_serie(itens)
+        log(f"  {cod} {e.get('Estacao_Nome')} [{e.get('Operadora_Sigla')}] leituras={len(itens)}",
+            f"de {ds[0]:%d/%m %H:%M} a {ds[-1]:%d/%m %H:%M}" if ds else "", "nível=" + (f"{r['nivel_m']} m" if r else "—"))
+        if r:
             achadas.append({"codigo": cod, "nome": e.get("Estacao_Nome"),
                             "municipio": e.get("Municipio_Nome"), "rio": e.get("Rio_Nome")})
-            log("  ok", cod, e.get("Estacao_Nome"), r["nivel_m"], "m")
     os.makedirs(os.path.dirname(ARQ_EST), exist_ok=True)
     json.dump({"atualizado": datetime.now(TZ).isoformat(), "estacoes": achadas},
               open(ARQ_EST, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
