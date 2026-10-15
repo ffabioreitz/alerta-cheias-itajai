@@ -1,0 +1,47 @@
+name: Alerta de cheias
+
+on:
+  schedule:
+    - cron: "7,37 * * * *"   # a cada 30 min
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: "teste = manda resumo agora · descobrir = refaz lista de estações · normal"
+        type: choice
+        options: [teste, descobrir, normal]
+        default: teste
+
+concurrency:
+  group: alerta
+  cancel-in-progress: false
+
+jobs:
+  rodar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Recuperar memória (estações e último estado)
+        uses: actions/cache/restore@v4
+        with:
+          path: cache
+          key: memoria-${{ github.run_id }}
+          restore-keys: memoria-
+
+      - name: Rodar o robô
+        env:
+          ANA_ID: ${{ secrets.ANA_ID }}
+          ANA_SENHA: ${{ secrets.ANA_SENHA }}
+          WHATSAPP_DESTINOS: ${{ secrets.WHATSAPP_DESTINOS }}
+          MODO: ${{ inputs.modo || 'normal' }}
+        run: |
+          mkdir -p cache
+          python3 alerta.py
+
+      - name: Guardar memória
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: cache
+          key: memoria-${{ github.run_id }}
