@@ -205,8 +205,13 @@ def whatsapp(texto):
             try:
                 with urllib.request.urlopen(url, timeout=60) as r:
                     resp = r.read().decode("utf-8", "ignore")
-                ok = any(k in resp.lower() for k in ("queued", "sent", "message to"))
-                log("WhatsApp", "…" + fone[-4:], "enviado" if ok else "resposta inesperada do CallMeBot")
+                limpo = re.sub(r"<[^>]+>", " ", resp)
+                limpo = limpo.replace(fone, "…" + fone[-4:]).replace(key.strip(), "***")
+                i = limpo.find("Text to send")
+                j = limpo.find("\n", i + 200) if i >= 0 else -1
+                resumo = " ".join((limpo[:i] + " [texto] " + (limpo[j:] if j > 0 else "")).split()) if i >= 0 else " ".join(limpo.split())
+                ok = "queued" in resp.lower() or "message sent" in resp.lower()
+                log("WhatsApp", "…" + fone[-4:], "enviado" if ok else "NÃO confirmado", "| CallMeBot:", resumo[-400:])
                 break
             except Exception as e:  # noqa
                 log("WhatsApp falhou", "…" + fone[-4:], e)
