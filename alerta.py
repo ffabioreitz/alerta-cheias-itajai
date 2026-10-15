@@ -66,6 +66,8 @@ def get(tok, rota, params):
     url = f"{BASE}/{rota}?" + urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
     j = http_json(url, {"Authorization": f"Bearer {tok}"})
     items = (j or {}).get("items") or []
+    if not items and j is not None:
+        log("vazio", params.get("Código da Estação", rota), "->", str(j.get("message") or j.get("status"))[:120])
     return items if isinstance(items, list) else [items]
 
 
@@ -96,9 +98,11 @@ def data(v):
 
 def resumo_serie(itens):
     """Último nível (m), subida nas últimas 3 h (cm/h) e chuva 24 h (mm)."""
-    cotas, chuva = [], 0.0
+    cotas, chuva, datas = [], 0.0, []
     for it in itens:
         d = data(it.get("Data_Hora_Medicao"))
+        if d:
+            datas.append(d)
         c = num(it.get("Cota_Adotada"))
         if d and c is not None and str(it.get("Cota_Adotada_Status", "0")) in ("0", "None", ""):
             cotas.append((d, c))
@@ -112,7 +116,8 @@ def resumo_serie(itens):
     ref = [c for d, c in cotas if d <= d_ult - timedelta(hours=3)]
     taxa = (c_ult - ref[-1]) / 3 if ref else None  # cm/h
     return {"hora": d_ult.strftime("%d/%m %H:%M"), "nivel_m": round(c_ult / 100, 2),
-            "taxa_cmh": None if taxa is None else round(taxa, 1), "chuva_mm": round(chuva, 1)}
+            "taxa_cmh": None if taxa is None else round(taxa, 1), "chuva_mm": round(chuva, 1),
+            "janela_h": max(1, round((max(datas) - min(datas)).total_seconds() / 3600)) if datas else 0}
 
 
 # ---------------------------------------------------------------- estações
@@ -132,7 +137,7 @@ def descobrir(tok):
             vistos.add(cod)
             cand.append((cod, e))
     log("candidatas (rio, sem usinas):", len(cand))
-    with ThreadPoolExecutor(max_workers=6) as ex:
+    with ThreadPoolExecutor(max_workers=CFG.get("paralelo", 1)) as ex:
         res = list(ex.map(lambda ce: resumo_serie(serie(tok, ce[0])), cand))
     achadas = []
     for (cod, e), r in zip(cand, res):
@@ -199,8 +204,8 @@ def whatsapp(texto):
             try:
                 with urllib.request.urlopen(url, timeout=60) as r:
                     resp = r.read().decode("utf-8", "ignore")
-                ok = "queued" in resp.lower() or "sent" in resp.lower()
-                log("WhatsApp", "…" + fone[-4:], "ok" if ok else "resposta: " + resp[:120])
+                ok = any(k in resp.lower() for k in ("queued", "sent", "message to"))
+                log("WhatsApp", "…" + fone[-4:], "enviado" if ok else "resposta inesperada do CallMeBot")
                 break
             except Exception as e:  # noqa
                 log("WhatsApp falhou", "…" + fone[-4:], e)
@@ -211,7 +216,7 @@ def whatsapp(texto):
 # ---------------------------------------------------------------- principal
 def linha(est, r, cl):
     t = "" if r["taxa_cmh"] is None else f' ({r["taxa_cmh"]:+.0f} cm/h)'
-    p = f' · chuva 24h {r["chuva_mm"]:.0f} mm' if r["chuva_mm"] else ""
+    p = f' · chuva {r["janela_h"]}h {r["chuva_mm"]:.0f} mm' if r["chuva_mm"] else ""
     marca = "" if cl == "normal" else f" {ROTULO[cl]}"
     return f'• {est["nome"]} ({est["municipio"]}): {r["nivel_m"]:.2f} m{t}{p}{marca} — {r["hora"]}'
 
@@ -232,8 +237,11 @@ def main():
     agora = datetime.now(TZ)
     linhas, alertas = [], []
     taxa_lim = CFG["subida_rapida_cmh"]
-    with ThreadPoolExecutor(max_workers=6) as ex:
-        res = list(ex.map(lambda e: resumo_serie(serie(tok, e["codigo"])), lst))
+    resumo_hora = (agora.hour == CFG["resumo_diario_hora"] and agora.minute < 30
+                   and estado.get("_resumo") != agora.strftime("%Y-%m-%d"))
+    faixa = "HORA_24" if (modo == "teste" or resumo_hora) else "HORA_6"
+    with ThreadPoolExecutor(max_workers=CFG.get("paralelo", 1)) as ex:
+        res = list(ex.map(lambda e: resumo_serie(serie(tok, e["codigo"], faixa)), lst))
     for est, r in zip(lst, res):
         if not r:
             linhas.append(f'• {est["nome"]} ({est["municipio"]}): sem dado recente')
@@ -257,8 +265,7 @@ def main():
     cab = f'🌊 Rio Itajaí — {agora.strftime("%d/%m %H:%M")}'
     if alertas:
         whatsapp(cab + "\n" + "\n".join(alertas) + "\n\nSituação geral:\n" + "\n".join(linhas))
-    elif modo == "teste" or (agora.hour == CFG["resumo_diario_hora"] and agora.minute < 30
-                             and estado.get("_resumo") != agora.strftime("%Y-%m-%d")):
+    elif modo == "teste" or resumo_hora:
         whatsapp(cab + (" (teste)" if modo == "teste" else " — resumo diário") + "\n" + "\n".join(linhas))
         if modo != "teste":
             estado["_resumo"] = agora.strftime("%Y-%m-%d")
