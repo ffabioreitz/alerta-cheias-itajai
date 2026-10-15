@@ -546,6 +546,13 @@ def main():
         pagina(ctx, texto.replace("*", ""))
     except Exception as e:  # noqa — sem gráfico, a mensagem segue
         log("infográfico falhou:", repr(e))
+    # versão para e-mail (comentário no GitHub → notificação por e-mail)
+    os.makedirs(DOCS, exist_ok=True)
+    url = B.get("url_pagina", "").rstrip("/")
+    md = texto.replace("*", "**").replace("\n", "  \n")
+    if url:
+        md += f"\n\n[![Painel]({url}/painel.png?v={AGORA:%Y%m%d%H%M})]({url}/)"
+    open(os.path.join(DOCS, "boletim.md"), "w", encoding="utf-8").write(md)
 
     if modo in ("teste", "normal", "boletim"):
         A.whatsapp(texto)
