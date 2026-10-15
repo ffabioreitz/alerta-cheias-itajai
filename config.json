@@ -1,0 +1,15 @@
+{
+  "_leia": "Ajuste aqui. Níveis em metros (régua da ANA). Confira os limites com a Defesa Civil antes de confiar neles.",
+  "municipios": [
+    "Taió", "Ituporanga", "José Boiteux",
+    "Rio do Sul", "Ibirama", "Apiúna", "Ascurra", "Indaial", "Timbó",
+    "Blumenau", "Gaspar", "Brusque"
+  ],
+  "limites_m": {
+    "_como_usar": "chave = código da estação ou parte do nome/município; valores em metros",
+    "Blumenau": {"atencao": 4.0, "alerta": 6.0, "emergencia": 8.0}
+  },
+  "subida_rapida_cmh": 20,
+  "resumo_diario_hora": 7,
+  "estacoes_fixas": []
+}
