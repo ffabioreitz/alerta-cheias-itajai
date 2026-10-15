@@ -257,21 +257,32 @@ def curva_chave(tok):
         h = next((_num(v) for k, v in it.items() if "cota" in k.lower() and _num(v) is not None), None)
         q = next((_num(v) for k, v in it.items() if "vazao" in k.lower().replace("ã", "a") and _num(v) is not None), None)
         if h is not None and q and q > 0:
-            pares.append((h / 100 if h > 30 else h, q))  # cota em cm → m
+            pares.append((h / 100 if h > 30 else h, q, str(it.get("Data_Hora_Dado", ""))[:10]))  # cota em cm → m
     log("pares nível×vazão:", len(pares))
     if len(pares) < 8:
         return None
+    log("amostra (data, h, Q):", sorted((p[2], p[0], round(p[1])) for p in pares)[-12:])
+
+    def ajusta(hs, qs):
+        melhor = None
+        for h0 in np.linspace(hs.min() - 6, hs.min() - 0.02, 300):
+            x, y = np.log(hs - h0), np.log(qs)
+            b, la = np.polyfit(x, y, 1)
+            r2 = 1 - ((y - (la + b * x)) ** 2).sum() / ((y - y.mean()) ** 2).sum()
+            if melhor is None or r2 > melhor[0]:
+                melhor = (r2, float(np.exp(la)), float(b), float(h0))
+        return melhor
+
     hs, qs = np.array([p[0] for p in pares]), np.array([p[1] for p in pares])
-    melhor = None
-    for h0 in np.linspace(hs.min() - 6, hs.min() - 0.02, 300):
-        x, y = np.log(hs - h0), np.log(qs)
-        b, la = np.polyfit(x, y, 1)
-        r2 = 1 - ((y - (la + b * x)) ** 2).sum() / ((y - y.mean()) ** 2).sum()
-        if melhor is None or r2 > melhor[0]:
-            melhor = (r2, float(np.exp(la)), float(b), float(h0))
-    r2, a, b, h0 = melhor
-    log(f"curva-chave: Q = {a:.2f}·(h−{h0:.2f})^{b:.2f}  R²={r2:.3f}  ({len(pares)} medições)")
-    if r2 < 0.85:
+    for volta in range(4):  # ajuste robusto: descarta medições muito fora da curva (mudança de régua, erro)
+        r2, a, b, h0 = ajusta(hs, qs)
+        log(f"curva-chave (volta {volta}): Q = {a:.2f}·(h−{h0:.2f})^{b:.2f}  R²={r2:.3f}  ({len(hs)} medições)")
+        res = np.log(qs) - np.log(a * (hs - h0) ** b)
+        ok = np.abs(res) <= max(2 * res.std(), 0.15)
+        if ok.all() or ok.sum() < 15:
+            break
+        hs, qs = hs[ok], qs[ok]
+    if r2 < 0.8 or len(hs) < 15:
         return None
     c = {"a": a, "b": b, "h0": h0, "r2": r2, "n": len(pares), "quando": AGORA.isoformat()}
     os.makedirs(CACHE, exist_ok=True)
