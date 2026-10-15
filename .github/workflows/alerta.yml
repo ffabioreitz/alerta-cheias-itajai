@@ -32,8 +32,8 @@ jobs:
           key: memoria-${{ github.run_id }}
           restore-keys: memoria-
 
-      - name: Instalar matplotlib
-        run: pip install --quiet matplotlib
+      - name: Instalar bibliotecas
+        run: pip install --quiet matplotlib cryptography
 
       - name: Rodar o robô
         env:
