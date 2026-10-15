@@ -112,9 +112,10 @@ def estacoes_estado():
         recente = dt is not None and AGORA - dt < timedelta(hours=B["dado_velho_h"])
         nome = (e.get("estacao") or "").replace("DCSC ", "").strip()
         if e.get("tipo_estacao") == "brm":
+            ref = next((r for k, r in B["barragens_ref"].items() if norm(k) in norm(nome)), {})
             barragens.append({"nome": nome, "mont": d.get("mont"), "jus": d.get("jus"),
-                              "abertas": d.get("compA"), "fechadas": d.get("compF"),
-                              "h24": v.get("h24"), "hora": dt, "recente": recente})
+                              "abertas": d.get("compA"), "fechadas": d.get("compF"), "ocup": d.get("cap"),
+                              "h24": v.get("h24"), "hora": dt, "recente": recente, "ref": ref})
             continue
         if not recente:
             continue
@@ -203,17 +204,106 @@ def lua(dt):
 
 def ana_complementar():
     if not (os.environ.get("ANA_ID") and os.environ.get("ANA_SENHA")):
-        return []
+        return [], None
     try:
         tok = A.token_ana()
     except SystemExit as e:
         log("ANA indisponível:", e)
-        return []
+        return [], None
     out = []
     for cod, nome in B["ana_estacoes"].items():
         r = A.resumo_serie(A.serie(tok, cod, "HORA_6"))
         if r:
             out.append({"nome": nome, **r})
+    return out, tok
+
+
+# ------------------------------------------------------------ previsão de nível (Blumenau)
+ARQ_CURVA = os.path.join(CACHE, "curva.json")
+
+
+def _num(v):
+    try:
+        return float(str(v).replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+
+
+def curva_chave(tok):
+    """Ajusta Q = a·(h−h0)^b com as medições de descarga da ANA (régua de Blumenau). Guarda por 30 dias."""
+    try:
+        c = json.load(open(ARQ_CURVA, encoding="utf-8"))
+        if AGORA - datetime.fromisoformat(c["quando"]) < timedelta(days=30):
+            return c
+    except Exception:  # noqa
+        pass
+    if tok is None:
+        return None
+    import numpy as np
+    itens = A.get(tok, "HidroSerieResumoDescarga/v1", {
+        "Código da Estação": B["estacao_curva"], "Tipo Filtro Data": "DATA_LEITURA",
+        "Data Inicial (yyyy-MM-dd)": "2000-01-01", "Data Final (yyyy-MM-dd)": AGORA.strftime("%Y-%m-%d")})
+    if itens:
+        log("resumo de descarga: campos", list(itens[0].keys())[:25])
+    pares = []
+    for it in itens:
+        h = next((_num(v) for k, v in it.items() if "cota" in k.lower() and _num(v) is not None), None)
+        q = next((_num(v) for k, v in it.items() if "vazao" in k.lower().replace("ã", "a") and _num(v) is not None), None)
+        if h is not None and q and q > 0:
+            pares.append((h / 100 if h > 30 else h, q))  # cota em cm → m
+    log("pares nível×vazão:", len(pares))
+    if len(pares) < 8:
+        return None
+    hs, qs = np.array([p[0] for p in pares]), np.array([p[1] for p in pares])
+    melhor = None
+    for h0 in np.linspace(hs.min() - 6, hs.min() - 0.02, 300):
+        x, y = np.log(hs - h0), np.log(qs)
+        b, la = np.polyfit(x, y, 1)
+        r2 = 1 - ((y - (la + b * x)) ** 2).sum() / ((y - y.mean()) ** 2).sum()
+        if melhor is None or r2 > melhor[0]:
+            melhor = (r2, float(np.exp(la)), float(b), float(h0))
+    r2, a, b, h0 = melhor
+    log(f"curva-chave: Q = {a:.2f}·(h−{h0:.2f})^{b:.2f}  R²={r2:.3f}  ({len(pares)} medições)")
+    if r2 < 0.85:
+        return None
+    c = {"a": a, "b": b, "h0": h0, "r2": r2, "n": len(pares), "quando": AGORA.isoformat()}
+    os.makedirs(CACHE, exist_ok=True)
+    json.dump(c, open(ARQ_CURVA, "w"))
+    return c
+
+
+def previsao_nivel(blu_nivel, tok):
+    """Vazão prevista pelo GloFAS (Copernicus, via Open-Meteo), ajustada à vazão de hoje e convertida em nível
+    pela curva-chave. Estimativa experimental — não substitui a previsão oficial."""
+    lat, lon = B["ponto_glofas"]
+    vs = "river_discharge,river_discharge_p25,river_discharge_p75,river_discharge_max"
+    j = get_json("https://flood-api.open-meteo.com/v1/flood?" + urllib.parse.urlencode(
+        {"latitude": lat, "longitude": lon, "daily": vs, "past_days": 2, "forecast_days": 5}))
+    if not j or "daily" not in j:
+        return None
+    d = j["daily"]
+    dias = [datetime.fromisoformat(t).date() for t in d["time"]]
+    hoje = AGORA.date()
+    if hoje not in dias:
+        return None
+    i0 = dias.index(hoje)
+    q0 = d["river_discharge"][i0]
+    if not q0:
+        return None
+    serie = lambda k: d.get(k) or [None] * len(dias)  # noqa
+    out = {"dias": dias[i0:i0 + 4], "q": serie("river_discharge")[i0:i0 + 4],
+           "q25": serie("river_discharge_p25")[i0:i0 + 4], "q75": serie("river_discharge_p75")[i0:i0 + 4],
+           "qmax": serie("river_discharge_max")[i0:i0 + 4], "q0": q0, "modo": "relativo"}
+    curva = curva_chave(tok)
+    if curva and blu_nivel is not None and blu_nivel > curva["h0"]:
+        a, b, h0 = curva["a"], curva["b"], curva["h0"]
+        qobs = a * (blu_nivel - h0) ** b
+        fator = qobs / q0
+        nivel = lambda q: None if q is None else round(h0 + (fator * q / a) ** (1 / b), 2)  # noqa
+        out.update(modo="nivel", fator=round(fator, 2), qobs=round(qobs),
+                   h=[nivel(q) for q in out["q"]], h25=[nivel(q) for q in out["q25"]],
+                   h75=[nivel(q) for q in out["q75"]], hmax=[nivel(q) for q in out["qmax"]])
+        out["h"][0] = blu_nivel
     return out
 
 
@@ -311,8 +401,8 @@ def infografico(ctx):
     plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 10, "text.color": INK,
                          "axes.edgecolor": GRID, "axes.labelcolor": MUTED,
                          "xtick.color": MUTED, "ytick.color": MUTED})
-    fig = plt.figure(figsize=(9, 13.5), dpi=120, facecolor=BG)
-    gs = fig.add_gridspec(6, 2, height_ratios=[0.55, 2.0, 2.15, 1.35, 1.35, 1.6], hspace=0.62, wspace=0.28,
+    fig = plt.figure(figsize=(9, 14), dpi=120, facecolor=BG)
+    gs = fig.add_gridspec(6, 2, height_ratios=[0.55, 2.3, 2.15, 1.35, 1.3, 1.5], hspace=0.62, wspace=0.28,
                           left=0.07, right=0.96, top=0.985, bottom=0.03)
     f = ctx["faixa"]
 
@@ -327,25 +417,49 @@ def infografico(ctx):
     ax.text(0.98, 0.45, f"{ctx['blu_nivel']:.2f} m" if ctx["blu_nivel"] is not None else "—", fontsize=26, weight="bold",
             color=cor_txt, transform=ax.transAxes, ha="right", va="center")
 
-    # Blumenau 24 h
+    # Blumenau: observado + estimativa 3 dias
     ax = fig.add_subplot(gs[1, :])
-    s = ctx["blu_serie"][-36:]
+    s = ctx["blu_serie"][-24:]
+    pn = ctx.get("prev_nivel")
     if s:
         xs, ys = [p[0] for p in s], [p[1] for p in s]
-        top = max(max(ys) + 1, 5)
+        fut = []
+        if pn and pn["modo"] == "nivel":
+            meio = lambda d: datetime(d.year, d.month, d.day, 12, tzinfo=TZ)  # noqa
+            fut = [(xs[-1], ys[-1], ys[-1], ys[-1])] + [
+                (meio(dd), h, lo if lo is not None else h, hi if hi is not None else h)
+                for dd, h, lo, hi in zip(pn["dias"][1:], pn["h"][1:], pn["h25"][1:], pn["h75"][1:]) if h is not None]
+        top = max(max(ys + [f[3] for f in fut]) + 1, 5)
         faixas = ctx["faixas"]
         for i, fx in enumerate(faixas):
             sup = faixas[i + 1]["nivel"] if i + 1 < len(faixas) else top + 5
             if fx["nivel"] < top:
                 ax.axhspan(fx["nivel"], min(sup, top), color=fx["cor"], alpha=0.16, lw=0)
                 ax.text(xs[0], fx["nivel"] + 0.05, f" {fx['nome']} ({fx['nivel']:g} m)", fontsize=8, color=MUTED, va="bottom")
-        ax.plot(xs, ys, color="#1f4e9c", lw=2)
+        ax.plot(xs, ys, color="#1f4e9c", lw=2, label="observado (AlertaBlu)")
         ax.plot(xs[-1], ys[-1], "o", ms=8, color="#1f4e9c", mec="white", mew=2)
-        ax.annotate(f"{ys[-1]:.2f} m", (xs[-1], ys[-1]), xytext=(-8, 10), textcoords="offset points", ha="right",
-                    fontsize=10, weight="bold")
-        ax.set_ylim(0, top); ax.set_xlim(xs[0], xs[-1] + timedelta(minutes=30))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Hh", tz=TZ))
-    ax.set_title("Itajaí-Açu em Blumenau — nível oficial (AlertaBlu), últimas horas", loc="left", fontsize=11, weight="bold")
+        ax.annotate(f"agora {ys[-1]:.2f} m", (xs[-1], ys[-1]), xytext=(0, 12), textcoords="offset points", ha="center",
+                    fontsize=9.5, weight="bold")
+        fim = xs[-1] + timedelta(minutes=30)
+        if len(fut) > 1:
+            fx_, fy, flo, fhi = zip(*fut)
+            ax.fill_between(fx_, flo, fhi, color="#1f4e9c", alpha=0.12, lw=0, label="faixa provável")
+            ax.plot(fx_, fy, color="#1f4e9c", lw=2, ls="--", label="estimativa (GloFAS ajustado)")
+            for x_, y_ in zip(fx_[1:], fy[1:]):
+                ax.plot(x_, y_, "o", ms=6, color="#1f4e9c", mec="white", mew=1.5)
+                ax.annotate(f"{x_:%d/%m}\n{y_:.1f} m", (x_, y_), xytext=(0, 9), textcoords="offset points",
+                            ha="center", fontsize=8.5)
+            fim = fx_[-1] + timedelta(hours=10)
+            ax.axvline(xs[-1], color=MUTED, lw=0.8, ls=":")
+            ax.legend(loc="lower right", fontsize=8, frameon=True, facecolor="white", edgecolor=GRID)
+            ax.xaxis.set_major_locator(mdates.DayLocator(tz=TZ))
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m", tz=TZ))
+        else:
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%Hh", tz=TZ))
+        ax.set_ylim(0, top); ax.set_xlim(xs[0], fim)
+    tit = ("Itajaí-Açu em Blumenau — últimas 24 h e estimativa para 3 dias" if pn and pn["modo"] == "nivel"
+           else "Itajaí-Açu em Blumenau — nível oficial (AlertaBlu), últimas 24 h")
+    ax.set_title(tit, loc="left", fontsize=11, weight="bold")
     ax.grid(axis="y", color=GRID, lw=0.8); ax.set_axisbelow(True)
     for sp in ("top", "right"):
         ax.spines[sp].set_visible(False)
@@ -370,18 +484,27 @@ def infografico(ctx):
     ax.set_title("Barragens de contenção", loc="left", fontsize=11, weight="bold")
     y = 0.94
     for b in ctx["barragens"]:
-        fech = b.get("fechadas") or 0
-        cor = INK
-        ax.text(0, y, b["nome"].replace("Barragem ", ""), fontsize=9.5, weight="bold", transform=ax.transAxes, va="top")
-        ax.text(1, y, f"comportas: {int(b.get('abertas') or 0)} ab. / {int(fech)} fech.", fontsize=8.5, color=cor,
-                transform=ax.transAxes, va="top", ha="right")
-        y -= 0.12
+        ref = b.get("ref") or {}
+        fech = int(b.get("fechadas") or 0)
+        ocup = b.get("ocup")
+        ax.text(0, y, ref.get("rotulo", b["nome"]), fontsize=9.5, weight="bold", transform=ax.transAxes, va="top")
+        ax.text(1, y, (f"ocupação {ocup:.1f}%" if ocup < 10 else f"ocupação {ocup:.0f}%").replace(".", ",") if ocup is not None else "", fontsize=9.5, weight="bold",
+                transform=ax.transAxes, va="top", ha="right", color=("#b3261e" if (ocup or 0) >= 50 else INK))
+        y -= 0.1
         mont = b.get("mont")
-        ax.text(0, y, f"montante {mont:.2f} m · chuva 24h {b.get('h24') or 0:.0f} mm" if mont else "sem leitura",
-                fontsize=8.5, color=MUTED, transform=ax.transAxes, va="top")
-        ax.text(1, y, f"{b['hora']:%d/%m %H:%M}" if b.get("hora") else "", fontsize=8, color=MUTED,
-                transform=ax.transAxes, va="top", ha="right")
-        y -= 0.16
+        linha = f"comportas {int(b.get('abertas') or 0)} ab. / {fech} fech."
+        if mont:
+            linha += f" · NA {mont:.1f} m"
+            if ref.get("vertedouro_m"):
+                linha += f" · vertedouro {ref['vertedouro_m']:.0f} m"
+        ax.text(0, y, linha, fontsize=8, color=MUTED, transform=ax.transAxes, va="top")
+        y -= 0.085
+        gat = ref.get("gatilho")
+        if gat:
+            atual = ctx["gatilhos"].get(b["nome"])
+            ax.text(0, y, f"fecha comportas: {gat}" + (f" — agora {atual:.2f} m" if atual is not None else ""),
+                    fontsize=8, color=MUTED, transform=ax.transAxes, va="top")
+        y -= 0.115
     if ctx["ana"]:
         ax.text(0, y, "Réguas das usinas (ANA)", fontsize=9.5, weight="bold", transform=ax.transAxes, va="top")
         y -= 0.11
@@ -481,6 +604,75 @@ pre{{white-space:pre-wrap;background:#fff;padding:12px;border-radius:8px;font-si
     open(os.path.join(DOCS, ".nojekyll"), "w").write("")
 
 
+def br(x, casas=2):
+    return f"{x:.{casas}f}".replace(".", ",")
+
+
+def email_md(c, blu_d3, aviso, titulo_aviso):
+    url = B.get("url_pagina", "").rstrip("/")
+    f = c["faixa"]
+    emo = {"Normalidade": "🟢", "Observação": "🟡", "Atenção": "🟠", "Alerta": "🔴", "Alerta Máximo": "🟣"}.get(f["nome"], "⚪")
+    tend = ("subindo" if (blu_d3 or 0) >= 0.05 else "descendo" if (blu_d3 or 0) <= -0.05 else "estável") if blu_d3 is not None else ""
+    M = []
+    if url:
+        M.append(f"[![Panorama do rio Itajaí]({url}/painel.png?v={AGORA:%Y%m%d%H%M})]({url}/)")
+        M.append("")
+    if c["blu_nivel"] is not None:
+        M.append(f"### {emo} Blumenau {br(c['blu_nivel'])} m — {f['nome']}" + (f" · {tend}" if tend else ""))
+    pn = c.get("prev_nivel")
+    if pn and pn["modo"] == "nivel":
+        dias = " · ".join(f"{d:%d/%m} **{br(h, 1)} m**" for d, h in zip(pn["dias"][1:], pn["h"][1:]) if h is not None)
+        hi = max((x for x in pn["h75"][1:] if x is not None), default=None)
+        M.append(f"**Próximos dias (estimativa):** {dias}" + (f" — faixa provável até {br(hi, 1)} m" if hi else ""))
+    elif pn:
+        var = [round((q / pn['q0'] - 1) * 100) for q in pn["q"][1:] if q]
+        M.append("**Próximos dias (vazão prevista, relativa a hoje):** " + " · ".join(
+            f"{d:%d/%m} {v:+d}%" for d, v in zip(pn["dias"][1:], var)))
+    M.append(f"**Chuva na bacia:** {br(c['chuva_obs24'], 0)} mm nas últimas 24 h · previsão "
+             f"{br(c['p24'] or 0, 0)} / {br(c['p48'] or 0, 0)} / {br(c['p72'] or 0, 0)} mm em 24 / 48 / 72 h")
+    M.append("")
+    if c["barragens"]:
+        M.append("| Barragem | Ocupação | Comportas (abertas / fechadas) | Fecha comportas quando |")
+        M.append("|---|---:|:---:|---|")
+        for b in c["barragens"]:
+            ref = b.get("ref") or {}
+            agora = c["gatilhos"].get(b["nome"])
+            gat = ref.get("gatilho", "—") + (f" (agora {br(agora)} m)" if agora is not None else "")
+            oc = (f"{br(b['ocup'], 1 if b['ocup'] < 10 else 0)}%") if b.get("ocup") is not None else "—"
+            M.append(f"| {ref.get('rotulo', b['nome'])} | {oc} | {int(b.get('abertas') or 0)} / {int(b.get('fechadas') or 0)} | {gat} |")
+        M.append("")
+    if c["rios"]:
+        M.append("| Régua | Nível | Δ 3 h |")
+        M.append("|---|---:|---:|")
+        for r in c["rios"][:8]:
+            d = r.get("delta3h")
+            M.append(f"| {r['nome']} | {br(r['nivel'])} m | {'—' if d is None else seta(d) + ' ' + br(d)} |")
+        M.append("")
+    M.append("**Cenários**")
+    for e, prob, t in c["cenarios"][:4]:
+        M.append(f"- {t}")
+    M.append("")
+    extra = []
+    it = (c.get("prev") or {}).get("Itajaí")
+    if it:
+        raj = max((h[3] or 0) for h in it["horas"])
+        extra.append(f"Itajaí 24 h: {min(h[1] for h in it['horas']):.0f}–{max(h[1] for h in it['horas']):.0f} °C, "
+                     f"chuva {br(it['p24'], 0)} mm ({it['prob']}%), rajada até {raj:.0f} km/h")
+    m, lu = c.get("mare"), c["lua"]
+    if m and m["proximos"]:
+        extra.append("Maré: " + ", ".join(f"{'preamar' if t == 'preamar' else 'baixa-mar'} {d:%H:%M}"
+                                          for t, d, v in m["proximos"][:4]) + f" · {lu['nome']}")
+    if extra:
+        M.append("<sub>" + " · ".join(extra) + "</sub>")
+    if aviso:
+        M.append("")
+        M.append(f"> **{titulo_aviso}** — {aviso[:280]}")
+    M.append("")
+    M.append(f"<sub>Fontes: Defesa Civil de Blumenau/AlertaBlu, Defesa Civil de SC, ANA, Open-Meteo/GloFAS. "
+             f"Estimativa de nível é experimental; a palavra oficial é da Defesa Civil. [Painel completo]({url}/)</sub>")
+    return "\n".join(M)
+
+
 # ------------------------------------------------------------ principal
 def main():
     modo = (os.environ.get("MODO") or "normal").lower()
@@ -490,7 +682,7 @@ def main():
     prev = previsao()
     mar = mare()
     moon = lua(AGORA)
-    ana = ana_complementar()
+    ana, tok = ana_complementar()
     titulo_aviso, aviso = aviso_blumenau()
 
     blu_nivel = blu_serie[-1][1] if blu_serie else None
@@ -500,12 +692,26 @@ def main():
     obs24 = round(sum(c["h24"] for c in obs) / len(obs), 1) if obs else 0
     obs72 = round(sum(c["h72"] for c in obs) / len(obs), 1) if obs else 0
     cen, p24, p72 = cenarios(blu_nivel, blu_d3, faixa, rios, barragens, obs, prev, mar, moon)
+    try:
+        pn = previsao_nivel(blu_nivel, tok)
+    except Exception as e:  # noqa
+        log("previsão de nível falhou:", repr(e))
+        pn = None
+    if pn and pn["modo"] == "nivel":
+        pico = max(x for x in pn["h"] if x is not None)
+        fx = faixa_de(pico, faixas)
+        if fx["nome"] != faixa["nome"]:
+            cen.insert(0, ("📈", "estimativa", f"Nível estimado em Blumenau pode chegar a ~{br(pico, 1)} m ({fx['nome']}) "
+                                               f"nos próximos dias."))
     bacia = [v for k, v in (prev or {}).items() if k != "Itajaí"]
     p48 = round(sum(v["p48"] for v in bacia) / len(bacia), 0) if bacia else None
 
     ctx = dict(blu_serie=blu_serie, faixas=faixas, faixa=faixa, blu_nivel=blu_nivel, rios=rios, barragens=barragens,
                ana=ana, chuva_obs24=obs24, chuva_obs72=obs72, p24=p24, p48=p48, p72=p72, prev=prev, mare=mar,
-               lua=moon, cenarios=cen)
+               lua=moon, cenarios=cen, prev_nivel=pn)
+    niveis_agora = {r["nome"]: r["nivel"] for r in rios}
+    niveis_agora["Blumenau"] = blu_nivel
+    ctx["gatilhos"] = {b["nome"]: niveis_agora.get((b.get("ref") or {}).get("gatilho_estacao")) for b in barragens}
 
     # ---------- texto do WhatsApp
     L = []
@@ -548,11 +754,7 @@ def main():
         log("infográfico falhou:", repr(e))
     # versão para e-mail (comentário no GitHub → notificação por e-mail)
     os.makedirs(DOCS, exist_ok=True)
-    url = B.get("url_pagina", "").rstrip("/")
-    md = texto.replace("*", "**").replace("\n", "  \n")
-    if url:
-        md += f"\n\n[![Painel]({url}/painel.png?v={AGORA:%Y%m%d%H%M})]({url}/)"
-    open(os.path.join(DOCS, "boletim.md"), "w", encoding="utf-8").write(md)
+    open(os.path.join(DOCS, "boletim.md"), "w", encoding="utf-8").write(email_md(ctx, blu_d3, aviso, titulo_aviso))
 
     if modo in ("teste", "normal", "boletim"):
         A.whatsapp(texto)
