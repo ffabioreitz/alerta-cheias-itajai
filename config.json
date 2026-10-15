@@ -101,6 +101,34 @@
       "83800010": "PCH Salto (Blumenau)",
       "83441000": "PCH Salto Itajaí do Norte",
       "83461000": "UHE Salto Pilão jusante"
+    },
+    "estacao_curva": "83800002",
+    "ponto_glofas": [
+      -26.919,
+      -49.066
+    ],
+    "barragens_ref": {
+      "Oeste": {
+        "rotulo": "Oeste (Taió)",
+        "comportas": 7,
+        "vertedouro_m": null,
+        "gatilho": "Rio do Sul ≥ 4,50 m",
+        "gatilho_estacao": "Rio do Sul"
+      },
+      "Sul": {
+        "rotulo": "Sul (Ituporanga)",
+        "comportas": 5,
+        "vertedouro_m": 401.0,
+        "gatilho": "Rio do Sul ≥ 4,50 m",
+        "gatilho_estacao": "Rio do Sul"
+      },
+      "José Boiteux": {
+        "rotulo": "Norte (José Boiteux)",
+        "comportas": 2,
+        "vertedouro_m": null,
+        "gatilho": "Blumenau ≥ 6,0 m",
+        "gatilho_estacao": "Blumenau"
+      }
     }
   }
 }
