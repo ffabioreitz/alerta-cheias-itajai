@@ -1,15 +1,106 @@
 {
   "_leia": "Ajuste aqui. Níveis em metros (régua da ANA). Confira os limites com a Defesa Civil antes de confiar neles.",
   "municipios": [
-    "Taió", "Ituporanga", "José Boiteux",
-    "Rio do Sul", "Ibirama", "Apiúna", "Ascurra", "Indaial", "Timbó",
-    "Blumenau", "Gaspar", "Brusque"
+    "Taió",
+    "Ituporanga",
+    "José Boiteux",
+    "Rio do Sul",
+    "Ibirama",
+    "Apiúna",
+    "Ascurra",
+    "Indaial",
+    "Timbó",
+    "Blumenau",
+    "Gaspar",
+    "Brusque"
   ],
   "limites_m": {
     "_como_usar": "chave = código da estação ou parte do nome/município; valores em metros",
-    "Blumenau": {"atencao": 4.0, "alerta": 6.0, "emergencia": 8.0}
+    "Blumenau": {
+      "atencao": 4.0,
+      "alerta": 6.0,
+      "emergencia": 8.0
+    }
   },
   "subida_rapida_cmh": 20,
   "resumo_diario_hora": 7,
-  "estacoes_fixas": []
+  "estacoes_fixas": [],
+  "boletim": {
+    "url_pagina": "https://ffabioreitz.github.io/alerta-cheias-itajai",
+    "dado_velho_h": 8,
+    "reguas": [
+      "Taió",
+      "Ituporanga",
+      "Rio do Sul",
+      "Ibirama",
+      "Timbó 1",
+      "Benedito Novo",
+      "Rio dos Cedros 1",
+      "Pomerode",
+      "Brusque",
+      "Botuverá 1",
+      "Guabiruba",
+      "Ilhota",
+      "Pouso Redondo",
+      "Presidente Getúlio",
+      "Laurentino",
+      "Vidal Ramos",
+      "Agronômica",
+      "Agrolândia",
+      "Doutor Pedrinho"
+    ],
+    "alto_vale": [
+      "Taió",
+      "Ituporanga",
+      "Rio do Sul",
+      "Ibirama"
+    ],
+    "pontos_previsao": [
+      [
+        "Taió",
+        -27.116,
+        -50.003
+      ],
+      [
+        "Ituporanga",
+        -27.414,
+        -49.6
+      ],
+      [
+        "José Boiteux",
+        -26.957,
+        -49.628
+      ],
+      [
+        "Rio do Sul",
+        -27.214,
+        -49.643
+      ],
+      [
+        "Blumenau",
+        -26.919,
+        -49.066
+      ],
+      [
+        "Brusque",
+        -27.098,
+        -48.917
+      ],
+      [
+        "Itajaí",
+        -26.908,
+        -48.662
+      ]
+    ],
+    "ponto_mare": [
+      -26.91,
+      -48.6
+    ],
+    "rajada_porto_kmh": 50,
+    "ana_estacoes": {
+      "83800010": "PCH Salto (Blumenau)",
+      "83441000": "PCH Salto Itajaí do Norte",
+      "83461000": "UHE Salto Pilão jusante"
+    }
+  }
 }
