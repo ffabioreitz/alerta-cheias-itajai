@@ -20,13 +20,47 @@ DC = "https://defesacivil.blumenau.sc.gov.br/static/data/"
 AGORA = datetime.now(TZ)
 
 
+_CTX = {}
+
+
+def contexto_aia(host):
+    """O site da Defesa Civil de Blumenau não envia o certificado intermediário (navegadores buscam sozinhos).
+    Aqui fazemos o mesmo: baixamos o intermediário indicado no próprio certificado (AIA) e verificamos a
+    cadeia completa até uma raiz confiável — a verificação continua valendo."""
+    if host in _CTX:
+        return _CTX[host]
+    import ssl
+    from cryptography import x509
+    from cryptography.hazmat.primitives.serialization import Encoding
+    from cryptography.x509.oid import AuthorityInformationAccessOID
+    folha = x509.load_pem_x509_certificate(ssl.get_server_certificate((host, 443)).encode())
+    aia = folha.extensions.get_extension_for_class(x509.AuthorityInformationAccess).value
+    url = next(d.access_location.value for d in aia if d.access_method == AuthorityInformationAccessOID.CA_ISSUERS)
+    bruto = urllib.request.urlopen(url, timeout=30).read()
+    try:
+        inter = x509.load_der_x509_certificate(bruto)
+    except ValueError:
+        inter = x509.load_pem_x509_certificate(bruto)
+    ctx = ssl.create_default_context()
+    ctx.load_verify_locations(cadata=inter.public_bytes(Encoding.PEM).decode())
+    _CTX[host] = ctx
+    return ctx
+
+
 def get_json(url, tent=3):
+    ctx = None
     for i in range(tent):
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "alerta-cheias-itajai/1.0"})
-            with urllib.request.urlopen(req, timeout=60) as r:
+            with urllib.request.urlopen(req, timeout=60, context=ctx) as r:
                 return json.loads(r.read().decode("utf-8"))
         except Exception as e:  # noqa
+            if "CERTIFICATE_VERIFY_FAILED" in str(e) and ctx is None:
+                try:
+                    ctx = contexto_aia(urllib.parse.urlparse(url).hostname)
+                    continue
+                except Exception as e2:  # noqa
+                    log("cadeia de certificado não resolvida:", e2)
             log("falha", url.split("?")[0], e)
             time.sleep(4 * (i + 1))
     return None
