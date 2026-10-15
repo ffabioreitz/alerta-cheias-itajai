@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 concurrency:
   group: alerta
@@ -55,6 +56,19 @@ jobs:
           git add -A
           git commit -qm "painel $(date -u +%Y-%m-%dT%H:%MZ)"
           git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" gh-pages
+
+      - name: Boletim por e-mail (comentário no GitHub)
+        if: ${{ (inputs.modo || 'boletim') != 'painel' && (inputs.modo || 'boletim') != 'descobrir' && hashFiles('docs/boletim.md') != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          n=$(gh issue list -R "$REPO" --state open --search "Boletim do rio Itajaí in:title" --json number -q '.[0].number')
+          if [ -z "$n" ]; then
+            url=$(gh issue create -R "$REPO" --title "Boletim do rio Itajaí" --body "Boletins horários do robô. Cada comentário novo chega por e-mail para quem acompanha este repositório.")
+            n=${url##*/}
+          fi
+          gh issue comment "$n" -R "$REPO" --body-file docs/boletim.md
 
       - name: Guardar memória
         if: always()
