@@ -2,14 +2,17 @@ name: Alerta de cheias
 
 on:
   schedule:
-    - cron: "7,37 * * * *"   # a cada 30 min
+    - cron: "12 * * * *"   # boletim a cada 1 h
   workflow_dispatch:
     inputs:
       modo:
-        description: "teste = manda resumo agora · descobrir = refaz lista de estações · normal"
+        description: "teste = boletim agora · descobrir = lista estações da ANA · painel = só atualiza a página"
         type: choice
-        options: [teste, descobrir, normal]
+        options: [teste, descobrir, painel]
         default: teste
+
+permissions:
+  contents: write
 
 concurrency:
   group: alerta
@@ -18,26 +21,40 @@ concurrency:
 jobs:
   rodar:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
-      - name: Recuperar memória (estações e último estado)
+      - name: Recuperar memória
         uses: actions/cache/restore@v4
         with:
           path: cache
           key: memoria-${{ github.run_id }}
           restore-keys: memoria-
 
+      - name: Instalar matplotlib
+        run: pip install --quiet matplotlib
+
       - name: Rodar o robô
         env:
           ANA_ID: ${{ secrets.ANA_ID }}
           ANA_SENHA: ${{ secrets.ANA_SENHA }}
           WHATSAPP_DESTINOS: ${{ secrets.WHATSAPP_DESTINOS }}
-          MODO: ${{ inputs.modo || 'normal' }}
+          MODO: ${{ inputs.modo || 'boletim' }}
         run: |
           mkdir -p cache
-          python3 alerta.py
+          if [ "$MODO" = "descobrir" ]; then python3 alerta.py; else python3 boletim.py; fi
+
+      - name: Publicar painel (GitHub Pages)
+        if: always() && hashFiles('docs/painel.png') != ''
+        run: |
+          cd docs
+          git init -q -b gh-pages
+          git config user.name "robo-cheias"
+          git config user.email "robo-cheias@users.noreply.github.com"
+          git add -A
+          git commit -qm "painel $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" gh-pages
 
       - name: Guardar memória
         if: always()
