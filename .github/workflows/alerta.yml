@@ -63,6 +63,7 @@ jobs:
           SMTP_USUARIO: ${{ secrets.SMTP_USUARIO }}
           SMTP_SENHA: ${{ secrets.SMTP_SENHA }}
           EMAIL_DESTINOS: ${{ secrets.EMAIL_DESTINOS }}
+          EMAIL_CRITICOS: ${{ secrets.EMAIL_CRITICOS }}
         run: python3 email_envio.py
 
       - name: Boletim por e-mail (comentário no GitHub)
