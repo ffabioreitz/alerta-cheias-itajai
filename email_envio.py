@@ -5,7 +5,8 @@ Envia o boletim (docs/boletim.md + docs/painel.png) por e-mail, via SMTP.
 Secrets usados (GitHub → Settings → Secrets and variables → Actions):
   SMTP_USUARIO    conta que envia (ex.: ffabioreitz1@gmail.com)
   SMTP_SENHA      senha de app do Gmail (16 letras) — NÃO é a senha normal
-  EMAIL_DESTINOS  destinatários separados por vírgula
+  EMAIL_DESTINOS  destinatários do boletim das 8h, separados por vírgula
+  EMAIL_CRITICOS  quem recebe também os alertas a cada 3 h (além do SMTP_USUARIO)
   SMTP_SERVIDOR   opcional (padrão smtp.gmail.com)
   SMTP_PORTA      opcional (padrão 465, SSL)
 
@@ -58,14 +59,19 @@ def main():
         log("SMTP_USUARIO / SMTP_SENHA / EMAIL_DESTINOS não configurados — e-mail direto não enviado")
         return
 
-    # boletim das 8h vai para todos; os demais (17h e alertas a cada 3 h) só para o responsável
+    # 8h → todos (EMAIL_DESTINOS); alertas a cada 3 h → responsável + EMAIL_CRITICOS; demais → só o responsável
     try:
-        grupo = json.load(open(os.path.join(AQUI, "cache", "destino_email.json"), encoding="utf-8")).get("grupo", False)
+        grupo = json.load(open(os.path.join(AQUI, "cache", "destino_email.json"), encoding="utf-8")).get("grupo", "dono")
     except Exception:  # noqa
-        grupo = False
-    if not grupo:
+        grupo = "dono"
+    if grupo is True:
+        grupo = "todos"
+    if grupo == "criticos":
+        extra = [d.strip() for d in re.split(r"[,;\s]+", os.environ.get("EMAIL_CRITICOS", "")) if d.strip()]
+        destinos = [usuario] + [d for d in extra if d.lower() != usuario.lower()]
+    elif grupo != "todos":
         destinos = [usuario]
-    log("destino:", "todos" if grupo else "só o responsável")
+    log("destino:", grupo, f"({len(destinos)} endereço(s))")
 
     md = open(MD, encoding="utf-8").read()
     agora = datetime.now(ZoneInfo("America/Sao_Paulo"))
