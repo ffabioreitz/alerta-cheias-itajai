@@ -771,7 +771,7 @@ def main():
     except Exception as e:  # noqa — sem gráfico, a mensagem segue
         log("infográfico falhou:", repr(e))
     # versão para e-mail (comentário no GitHub → notificação por e-mail)
-    # Agenda: 7h, 10h, 13h, 16h e 19h. Fora disso, só se houver risco de nível crítico em 3 dias.
+    # Agenda: 8h e 17h; com risco de nível crítico em 3 dias, 8h/11h/14h/17h.
     os.makedirs(DOCS, exist_ok=True)
     arq_md = os.path.join(DOCS, "boletim.md")
     if os.path.exists(arq_md):
@@ -786,13 +786,16 @@ def main():
         ult = json.load(open(arq_env, encoding="utf-8"))
     except Exception:  # noqa
         ult = {}
-    slot = f"{AGORA:%Y-%m-%d}-{(AGORA.hour - 7) // 3}" if 7 <= AGORA.hour <= 20 else None
+    # Normal: 8h e 17h. Com risco de nível crítico em 3 dias: a cada 3 h no horário comercial (8, 11, 14, 17h).
+    # Se a execução do GitHub atrasar, o horário ainda vale por até 2 h (e só envia uma vez por horário).
+    horas_env = [8, 11, 14, 17] if critico else [8, 17]
+    h_slot = next((h for h in reversed(horas_env) if h <= AGORA.hour < h + 2), None)
+    slot = f"{AGORA:%Y-%m-%d}-{h_slot:02d}h" if h_slot is not None else None
     if modo == "teste":
         motivo = "teste manual"
-    elif critico:
-        motivo = f"risco de nível crítico (≥ {lim:.1f} m em Blumenau em até 3 dias)"
     elif slot and ult.get("slot") != slot:
-        motivo = "horário agendado"
+        motivo = (f"risco de nível crítico (≥ {lim:.1f} m em Blumenau em até 3 dias) — boletim das {h_slot}h"
+                  if critico else f"boletim agendado das {h_slot}h")
     else:
         motivo = None
     log("e-mail:", motivo or "fora do horário — não envia")
