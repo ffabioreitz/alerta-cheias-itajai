@@ -771,7 +771,7 @@ def main():
     except Exception as e:  # noqa — sem gráfico, a mensagem segue
         log("infográfico falhou:", repr(e))
     # versão para e-mail (comentário no GitHub → notificação por e-mail)
-    # Agenda: 9h e 17h; com risco de nível crítico em 3 dias, 9h/12h/15h/17h.
+    # Agenda: grupo só às 8h; Fabio às 8h e 17h, e a cada 3 h (8/11/14/17h) com risco de nível crítico em 3 dias.
     os.makedirs(DOCS, exist_ok=True)
     arq_md = os.path.join(DOCS, "boletim.md")
     if os.path.exists(arq_md):
@@ -786,9 +786,9 @@ def main():
         ult = json.load(open(arq_env, encoding="utf-8"))
     except Exception:  # noqa
         ult = {}
-    # Normal: 9h e 17h. Com risco de nível crítico em 3 dias: a cada 3 h no horário comercial (9, 12, 15, 17h).
+    # Normal: 8h e 17h. Com risco de nível crítico em 3 dias: a cada 3 h no horário comercial (8, 11, 14, 17h).
     # Se a execução do GitHub atrasar, o horário ainda vale por até 2 h (e só envia uma vez por horário).
-    horas_env = [9, 12, 15, 17] if critico else [9, 17]
+    horas_env = [8, 11, 14, 17] if critico else [8, 17]
     h_slot = next((h for h in reversed(horas_env) if h <= AGORA.hour < h + 2), None)
     slot = f"{AGORA:%Y-%m-%d}-{h_slot:02d}h" if h_slot is not None else None
     if modo == "teste":
@@ -798,9 +798,13 @@ def main():
                   if critico else f"boletim agendado das {h_slot}h")
     else:
         motivo = None
-    log("e-mail:", motivo or "fora do horário — não envia")
+    # quem recebe: o boletim das 8h vai para todos (EMAIL_DESTINOS); os demais só para o dono (SMTP_USUARIO)
+    grupo = bool(motivo) and motivo != "teste manual" and h_slot == 8
+    log("e-mail:", (motivo + (" — todos" if grupo else " — só o responsável")) if motivo else "fora do horário — não envia")
     if motivo:
         open(arq_md, "w", encoding="utf-8").write(email_md(ctx, blu_d3, aviso, titulo_aviso))
+        os.makedirs(CACHE, exist_ok=True)
+        json.dump({"grupo": grupo}, open(os.path.join(CACHE, "destino_email.json"), "w", encoding="utf-8"))
         if motivo != "teste manual":
             os.makedirs(CACHE, exist_ok=True)
             json.dump({"slot": slot, "quando": AGORA.isoformat()}, open(arq_env, "w", encoding="utf-8"))
