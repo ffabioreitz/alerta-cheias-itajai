@@ -771,7 +771,7 @@ def main():
     except Exception as e:  # noqa — sem gráfico, a mensagem segue
         log("infográfico falhou:", repr(e))
     # versão para e-mail (comentário no GitHub → notificação por e-mail)
-    # Agenda: 8h e 17h; com risco de nível crítico em 3 dias, 8h/11h/14h/17h.
+    # Agenda: 9h e 17h; com risco de nível crítico em 3 dias, 9h/12h/15h/17h.
     os.makedirs(DOCS, exist_ok=True)
     arq_md = os.path.join(DOCS, "boletim.md")
     if os.path.exists(arq_md):
@@ -786,9 +786,9 @@ def main():
         ult = json.load(open(arq_env, encoding="utf-8"))
     except Exception:  # noqa
         ult = {}
-    # Normal: 8h e 17h. Com risco de nível crítico em 3 dias: a cada 3 h no horário comercial (8, 11, 14, 17h).
+    # Normal: 9h e 17h. Com risco de nível crítico em 3 dias: a cada 3 h no horário comercial (9, 12, 15, 17h).
     # Se a execução do GitHub atrasar, o horário ainda vale por até 2 h (e só envia uma vez por horário).
-    horas_env = [8, 11, 14, 17] if critico else [8, 17]
+    horas_env = [9, 12, 15, 17] if critico else [9, 17]
     h_slot = next((h for h in reversed(horas_env) if h <= AGORA.hour < h + 2), None)
     slot = f"{AGORA:%Y-%m-%d}-{h_slot:02d}h" if h_slot is not None else None
     if modo == "teste":
