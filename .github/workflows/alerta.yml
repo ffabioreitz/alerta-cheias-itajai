@@ -34,7 +34,7 @@ jobs:
           restore-keys: memoria-
 
       - name: Instalar bibliotecas
-        run: pip install --quiet matplotlib cryptography
+        run: pip install --quiet matplotlib cryptography markdown
 
       - name: Rodar o robô
         env:
@@ -56,6 +56,14 @@ jobs:
           git add -A
           git commit -qm "painel $(date -u +%Y-%m-%dT%H:%MZ)"
           git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" gh-pages
+
+      - name: Boletim por e-mail direto (painel aberto no corpo)
+        if: ${{ (inputs.modo || 'boletim') != 'painel' && (inputs.modo || 'boletim') != 'descobrir' && hashFiles('docs/boletim.md') != '' }}
+        env:
+          SMTP_USUARIO: ${{ secrets.SMTP_USUARIO }}
+          SMTP_SENHA: ${{ secrets.SMTP_SENHA }}
+          EMAIL_DESTINOS: ${{ secrets.EMAIL_DESTINOS }}
+        run: python3 email_envio.py
 
       - name: Boletim por e-mail (comentário no GitHub)
         if: ${{ (inputs.modo || 'boletim') != 'painel' && (inputs.modo || 'boletim') != 'descobrir' && hashFiles('docs/boletim.md') != '' }}
