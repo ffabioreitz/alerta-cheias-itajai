@@ -12,6 +12,7 @@ Secrets usados (GitHub → Settings → Secrets and variables → Actions):
 Os destinatários vão em cópia oculta (cada um não vê os outros).
 Se faltar algum secret, o script só avisa no log e termina sem erro.
 """
+import json
 import os
 import re
 import smtplib
@@ -56,6 +57,15 @@ def main():
     if not (usuario and senha and destinos):
         log("SMTP_USUARIO / SMTP_SENHA / EMAIL_DESTINOS não configurados — e-mail direto não enviado")
         return
+
+    # boletim das 8h vai para todos; os demais (17h e alertas a cada 3 h) só para o responsável
+    try:
+        grupo = json.load(open(os.path.join(AQUI, "cache", "destino_email.json"), encoding="utf-8")).get("grupo", False)
+    except Exception:  # noqa
+        grupo = False
+    if not grupo:
+        destinos = [usuario]
+    log("destino:", "todos" if grupo else "só o responsável")
 
     md = open(MD, encoding="utf-8").read()
     agora = datetime.now(ZoneInfo("America/Sao_Paulo"))
