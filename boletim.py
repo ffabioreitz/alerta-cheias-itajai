@@ -94,6 +94,32 @@ def faixa_de(nivel, faixas):
     return f
 
 
+# Faixas do Plano de Contingência JBS (jul/2026) — referência: régua de Blumenau
+FAIXAS_JBS = [
+    {"nivel": 0.0, "nome": "Normal", "cor": "#2e9d57"},
+    {"nivel": 6.0, "nome": "Atenção", "cor": "#f2c200"},
+    {"nivel": 8.0, "nome": "Alerta", "cor": "#f28c00"},
+    {"nivel": 10.0, "nome": "Emergência", "cor": "#d83a3a"},
+    {"nivel": 12.0, "nome": "Crise", "cor": "#7b2cbf"},
+    {"nivel": 14.0, "nome": "Catástrofe", "cor": "#222222"},
+]
+EMO_JBS = {"Normal": "🟢", "Atenção": "🟡", "Alerta": "🟠", "Emergência": "🔴", "Crise": "🟣", "Catástrofe": "⚫"}
+ESCUROS = ("Alerta", "Emergência", "Crise", "Catástrofe")
+
+
+def nivel_por_chuva(obs24, p24, obs72, p72):
+    """Gatilhos de chuva do Plano: >100 mm/24 h → Atenção; >200 mm/72 h → Alerta; previsão >300 mm → Emergência."""
+    if (p72 or 0) > 300:
+        return 10.0, f"previsão de ~{p72:.0f} mm em 72 h na bacia (> 300 mm)"
+    m72 = max(obs72 or 0, p72 or 0)
+    if m72 > 200:
+        return 8.0, f"~{m72:.0f} mm em 72 h na bacia (> 200 mm)"
+    m24 = max(obs24 or 0, p24 or 0)
+    if m24 > 100:
+        return 6.0, f"~{m24:.0f} mm em 24 h na bacia (> 100 mm)"
+    return 0.0, ""
+
+
 def leitura_dt(s):
     try:
         return datetime.strptime(s, "%d/%m/%Y - %H:%M").replace(tzinfo=TZ)
@@ -375,8 +401,8 @@ def cenarios(blu_nivel, blu_d3, faixa, rios, barr, chuva_obs, prev, mar, moon):
     alto = [r for r in rios if r["nome"] in B["alto_vale"] and r.get("delta3h") is not None]
     sobe_alto = [r for r in alto if r["delta3h"] >= 0.3]
 
-    if faixa["nome"] in ("Alerta", "Alerta Máximo"):
-        c.append(("🔴", "provável", f"Rio em {faixa['nome'].upper()} em Blumenau — seguir as orientações da Defesa Civil (199/193)."))
+    if faixa["nivel"] >= 8:
+        c.append(("🔴", "provável", f"Nível JBS {faixa['nome'].upper()} — seguir o Plano de Contingência (Comitê de Crise / PCN)."))
     if blu_d3 is not None and blu_d3 >= 0.3:
         c.append(("📈", "em curso", f"Itajaí-Açu subindo em Blumenau ({blu_d3:+.2f} m em 3 h)."))
     if sobe_alto:
@@ -398,7 +424,7 @@ def cenarios(blu_nivel, blu_d3, faixa, rios, barr, chuva_obs, prev, mar, moon):
         pre = [e for e in mar["proximos"] if e[0] == "preamar"]
         it = (prev or {}).get("Itajaí")
         rajada = max((h[3] or 0) for h in it["horas"]) if it else 0
-        if pre and (faixa["nivel"] >= 4 or moon["sizigia"]):
+        if pre and (faixa["nivel"] >= 6 or moon["sizigia"]):
             c.append(("🌗", "atenção", f"Preamar às {pre[0][1]:%H:%M}" + (" em período de sizígia" if moon["sizigia"] else "")
                       + ": escoamento mais lento na foz em Itajaí."))
         if rajada >= B["rajada_porto_kmh"]:
@@ -427,10 +453,10 @@ def infografico(ctx):
     # cabeçalho
     ax = fig.add_subplot(gs[0, :]); ax.axis("off")
     ax.add_patch(plt.Rectangle((0, 0), 1, 1, transform=ax.transAxes, color=f["cor"], clip_on=False))
-    claro = f["nome"] in ("Alerta", "Alerta Máximo")
+    claro = f["nome"] in ESCUROS
     cor_txt = "#ffffff" if claro else INK
     ax.text(0.02, 0.62, "RIO ITAJAÍ — PANORAMA", fontsize=17, weight="bold", color=cor_txt, transform=ax.transAxes, va="center")
-    ax.text(0.02, 0.2, f"{AGORA:%d/%m/%Y %H:%M} · Blumenau: {f['nome'].upper()}", fontsize=11.5, color=cor_txt,
+    ax.text(0.02, 0.2, f"{AGORA:%d/%m/%Y %H:%M} · Nível JBS: {f['nome'].upper()} (régua de Blumenau)", fontsize=11.5, color=cor_txt,
             transform=ax.transAxes, va="center")
     ax.text(0.98, 0.45, f"{ctx['blu_nivel']:.2f} m" if ctx["blu_nivel"] is not None else "—", fontsize=26, weight="bold",
             color=cor_txt, transform=ax.transAxes, ha="right", va="center")
@@ -447,7 +473,7 @@ def infografico(ctx):
             fut = [(xs[-1], ys[-1], ys[-1], ys[-1])] + [
                 (meio(dd), h, lo if lo is not None else h, hi if hi is not None else h)
                 for dd, h, lo, hi in zip(pn["dias"][1:], pn["h"][1:], pn["h25"][1:], pn["h75"][1:]) if h is not None]
-        top = max(max(ys + [f[3] for f in fut]) + 1, (ctx["faixas"][-1]["nivel"] + 1) if ctx["faixas"] else 9)  # régua inteira
+        top = max(max(ys + [f[3] for f in fut]) + 1, 9)  # mostra até a faixa de Alerta (8 m)
         faixas = ctx["faixas"]
         for i, fx in enumerate(faixas):
             sup = faixas[i + 1]["nivel"] if i + 1 < len(faixas) else top + 5
@@ -629,14 +655,21 @@ def br(x, casas=2):
 def email_md(c, blu_d3, aviso, titulo_aviso):
     url = B.get("url_pagina", "").rstrip("/")
     f = c["faixa"]
-    emo = {"Normalidade": "🟢", "Observação": "🟡", "Atenção": "🟠", "Alerta": "🔴", "Alerta Máximo": "🟣"}.get(f["nome"], "⚪")
+    emo = EMO_JBS.get(f["nome"], "⚪")
     tend = ("subindo" if (blu_d3 or 0) >= 0.05 else "descendo" if (blu_d3 or 0) <= -0.05 else "estável") if blu_d3 is not None else ""
     M = []
     if url:
         M.append(f"[![Panorama do rio Itajaí]({url}/painel.png?v={AGORA:%Y%m%d%H%M})]({url}/)")
         M.append("")
     if c["blu_nivel"] is not None:
-        M.append(f"### {emo} Blumenau {br(c['blu_nivel'])} m — {f['nome']}" + (f" · {tend}" if tend else ""))
+        M.append(f"### {emo} Nível JBS: {f['nome']} — Blumenau {br(c['blu_nivel'])} m" + (f" · {tend}" if tend else ""))
+        extra_n = []
+        if c.get("motivo_chuva"):
+            extra_n.append(f"nível elevado pela chuva: {c['motivo_chuva']}")
+        if c.get("faixa_dc"):
+            extra_n.append(f"Defesa Civil de Blumenau: {c['faixa_dc']['nome']}")
+        if extra_n:
+            M.append("<sub>" + " · ".join(extra_n) + "</sub>")
     pn = c.get("prev_nivel")
     if pn and pn["modo"] == "nivel":
         dias = " · ".join(f"{d:%d/%m} **{br(h, 1)} m**" for d, h in zip(pn["dias"][1:], pn["h"][1:]) if h is not None)
@@ -705,11 +738,21 @@ def main():
 
     blu_nivel = blu_serie[-1][1] if blu_serie else None
     blu_d3 = tendencia(blu_serie, 3)
-    faixa = faixa_de(blu_nivel or 0, faixas)
+    faixa_dc = faixa_de(blu_nivel or 0, faixas)       # situação oficial da Defesa Civil de Blumenau
+    faixas = FAIXAS_JBS                                 # daqui em diante: faixas do Plano de Contingência JBS
     obs = [c for c in chuvas if c["nome"] not in ("",)]
     obs24 = round(sum(c["h24"] for c in obs) / len(obs), 1) if obs else 0
     obs72 = round(sum(c["h72"] for c in obs) / len(obs), 1) if obs else 0
+    bacia0 = [v for k, v in (prev or {}).items() if k != "Itajaí"]
+    p24_ = round(sum(v["p24"] for v in bacia0) / len(bacia0), 0) if bacia0 else 0
+    p72_ = round(sum(v["p72"] for v in bacia0) / len(bacia0), 0) if bacia0 else 0
+    nivel_chuva, motivo_chuva = nivel_por_chuva(obs24, p24_, obs72, p72_)
+    faixa = faixa_de(max(blu_nivel or 0, nivel_chuva), faixas)
+    if not (nivel_chuva > (blu_nivel or 0) and faixa_de(nivel_chuva, faixas)["nome"] != faixa_de(blu_nivel or 0, faixas)["nome"]):
+        motivo_chuva = ""
     cen, p24, p72 = cenarios(blu_nivel, blu_d3, faixa, rios, barragens, obs, prev, mar, moon)
+    if motivo_chuva:
+        cen.insert(0, ("⛈️", "plano", f"Nível JBS elevado para {faixa['nome'].upper()} pela chuva: {motivo_chuva}."))
     try:
         pn = previsao_nivel(blu_nivel, tok)
     except Exception as e:  # noqa
@@ -726,17 +769,17 @@ def main():
 
     ctx = dict(blu_serie=blu_serie, faixas=faixas, faixa=faixa, blu_nivel=blu_nivel, rios=rios, barragens=barragens,
                ana=ana, chuva_obs24=obs24, chuva_obs72=obs72, p24=p24, p48=p48, p72=p72, prev=prev, mare=mar,
-               lua=moon, cenarios=cen, prev_nivel=pn)
+               lua=moon, cenarios=cen, prev_nivel=pn, faixa_dc=faixa_dc, motivo_chuva=motivo_chuva)
     niveis_agora = {r["nome"]: r["nivel"] for r in rios}
     niveis_agora["Blumenau"] = blu_nivel
     ctx["gatilhos"] = {b["nome"]: niveis_agora.get((b.get("ref") or {}).get("gatilho_estacao")) for b in barragens}
 
     # ---------- texto do WhatsApp
     L = []
-    emo_f = {"Normalidade": "🟢", "Observação": "🟡", "Atenção": "🟠", "Alerta": "🔴", "Alerta Máximo": "🟣"}.get(faixa["nome"], "⚪")
+    emo_f = EMO_JBS.get(faixa["nome"], "⚪")
     L.append(f"🌊 *Rio Itajaí — {AGORA:%d/%m %H:%M}*")
     if blu_nivel is not None:
-        L.append(f"{emo_f} Blumenau: *{blu_nivel:.2f} m* ({faixa['nome']}) {seta(blu_d3)}"
+        L.append(f"{emo_f} Nível JBS: *{faixa['nome']}* · Blumenau *{blu_nivel:.2f} m* {seta(blu_d3)}"
                  + ("" if blu_d3 is None else f" {blu_d3:+.2f} m/3h"))
     if rios:
         L.append("📏 " + " · ".join(f"{r['nome']} {r['nivel']:.2f}{seta(r.get('delta3h'))}" for r in rios[:6]))
@@ -780,7 +823,7 @@ def main():
     pico3d = None
     if pn and pn["modo"] == "nivel":
         pico3d = max((x for x in (pn.get("hmax") or []) + (pn.get("h75") or []) + pn["h"] if x is not None), default=None)
-    critico = (blu_nivel or 0) >= lim or (pico3d or 0) >= lim
+    critico = (blu_nivel or 0) >= lim or (pico3d or 0) >= lim or nivel_chuva >= lim
     arq_env = os.path.join(CACHE, "envio.json")
     try:
         ult = json.load(open(arq_env, encoding="utf-8"))
@@ -794,13 +837,21 @@ def main():
     if modo == "teste":
         motivo = "teste manual"
     elif slot and ult.get("slot") != slot:
-        motivo = (f"risco de nível crítico (≥ {lim:.1f} m em Blumenau em até 3 dias) — boletim das {h_slot}h"
+        motivo = (f"nível JBS Alerta ou acima (≥ {lim:.0f} m em Blumenau ou chuva) em até 3 dias — boletim das {h_slot}h"
                   if critico else f"boletim agendado das {h_slot}h")
     else:
         motivo = None
     # quem recebe: o boletim das 8h vai para todos (EMAIL_DESTINOS); os demais só para o dono (SMTP_USUARIO)
-    grupo = bool(motivo) and motivo != "teste manual" and h_slot == 8
-    log("e-mail:", (motivo + (" — todos" if grupo else " — só o responsável")) if motivo else "fora do horário — não envia")
+    # 8h → todos; demais horários com nível crítico → responsável + EMAIL_CRITICOS; 17h normal e teste → só o responsável
+    if not motivo or motivo == "teste manual":
+        grupo = "dono"
+    elif h_slot == 8:
+        grupo = "todos"
+    elif critico:
+        grupo = "criticos"
+    else:
+        grupo = "dono"
+    log("e-mail:", (motivo + f" — destino: {grupo}") if motivo else "fora do horário — não envia")
     if motivo:
         open(arq_md, "w", encoding="utf-8").write(email_md(ctx, blu_d3, aviso, titulo_aviso))
         os.makedirs(CACHE, exist_ok=True)
